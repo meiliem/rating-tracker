@@ -1,0 +1,42 @@
+name: 별점 추적
+
+on:
+  schedule:
+    - cron: '0 0 * * 1-5'    # 평일 KST 09:00 (참고용 — 실제 실행은 cron-job.org가 트리거)
+  workflow_dispatch:
+
+permissions:
+  contents: write             # 별점 기록 파일을 레포에 다시 저장하기 위해 필요
+
+jobs:
+  track:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 코드 가져오기
+        uses: actions/checkout@v4
+
+      - name: Python 준비
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: 라이브러리 설치
+        run: pip install -r requirements.txt
+
+      - name: 별점 점검 및 메일 발송
+        env:
+          SMTP_HOST: ${{ secrets.SMTP_HOST }}
+          SMTP_PORT: ${{ secrets.SMTP_PORT }}
+          SMTP_USER: ${{ secrets.SMTP_USER }}
+          SMTP_PASS: ${{ secrets.SMTP_PASS }}
+          MAIL_FROM: ${{ secrets.MAIL_FROM }}
+          MAIL_TO:   ${{ secrets.MAIL_TO }}
+        run: python rating_tracker.py
+
+      - name: 별점 기록 저장
+        run: |
+          git config user.name "rating-bot"
+          git config user.email "rating-bot@users.noreply.github.com"
+          git add rating_history.json
+          git commit -m "update rating history" || echo "변경 없음"
+          git push || echo "푸시 생략"
