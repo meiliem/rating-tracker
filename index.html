@@ -1,0 +1,151 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>별점 추이</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
+<style>
+  body { font-family:-apple-system,'Apple SD Gothic Neo','Malgun Gothic',sans-serif; color:#222;
+         max-width:860px; margin:0 auto; padding:24px 18px 60px; }
+  h1 { font-size:20px; font-weight:600; margin:0 0 2px; }
+  .sub { font-size:13px; color:#777; margin-bottom:18px; }
+  .row { display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin-bottom:10px; }
+  .lab { font-size:12px; color:#999; }
+  button { font-size:12px; padding:5px 11px; border:1px solid #ddd; background:#fff; border-radius:7px; cursor:pointer; }
+  button.on { font-weight:600; border-color:#888; }
+  .chip { cursor:pointer; user-select:none; font-size:12px; padding:5px 11px; border-radius:14px; border:1px solid #ddd; color:#777; background:#fff; }
+  .chartbox { position:relative; width:100%; height:360px; margin-top:8px; }
+  .note { font-size:11px; color:#aaa; margin-top:12px; }
+  .empty { color:#999; font-size:14px; padding:40px 0; text-align:center; }
+</style>
+</head>
+<body>
+  <h1>📈 별점 추이</h1>
+  <div class="sub" id="sub">데이터를 불러오는 중…</div>
+
+  <div class="row">
+    <span class="lab">기간</span>
+    <button onclick="setRange(7)"    id="p7">최근 1주일</button>
+    <button onclick="setRange(30)"   id="p30">최근 1개월</button>
+    <button onclick="setRange(90)"   id="p90">최근 3개월</button>
+    <button onclick="setRange(180)"  id="p180">최근 6개월</button>
+    <button onclick="setRange(365)"  id="p365">최근 1년</button>
+    <button onclick="setRange(99999)" id="pall">전체</button>
+  </div>
+  <div class="row">
+    <span class="lab">게임</span>
+    <button onclick="showAll()">전체 켜기</button>
+    <button onclick="clearAll()">모두 끄기</button>
+  </div>
+  <div class="row" id="chips"></div>
+
+  <div class="chartbox"><canvas id="chart" role="img" aria-label="게임별 평균 별점 추이 그래프"></canvas></div>
+  <div class="note">선에 마우스를 올리면 그날 별점이 표시됩니다. · 기간과 게임을 골라서 보세요. <span id="agg"></span></div>
+
+<script>
+const PALETTE = ['#c0392b','#185FA5','#1d9e75','#7F77DD','#BA7517','#D4537E','#5F5E5A','#0F6E56','#993C1D','#534AB7','#D85A30','#378ADD','#639922','#A32D2D'];
+let games = [], chart = null, range = 30;
+
+async function load() {
+  try {
+    const res = await fetch('rating_history.json?_=' + Date.now());
+    const data = await res.json();
+    games = Object.keys(data).map((pkg, i) => ({
+      name: data[pkg].name || pkg,
+      hist: (data[pkg].history || []),
+      color: PALETTE[i % PALETTE.length],
+      on: true,
+    }));
+    if (!games.length) { showEmpty('아직 기록된 데이터가 없습니다.'); return; }
+    const totalDays = Math.max(...games.map(g => g.hist.length));
+    document.getElementById('sub').textContent =
+      `게임 ${games.length}개 · 기록 ${totalDays}일치` + (totalDays < 3 ? ' (데이터가 쌓일수록 추이가 또렷해져요)' : '');
+    drawChips(); setRange(30);
+  } catch (e) {
+    showEmpty('데이터를 불러오지 못했습니다. (rating_history.json 확인)');
+  }
+}
+
+function showEmpty(msg){ document.querySelector('.chartbox').innerHTML = '<div class="empty">'+msg+'</div>'; }
+
+function allDates() {
+  const set = new Set();
+  games.forEach(g => g.hist.forEach(([d]) => set.add(d)));
+  return [...set].sort();
+}
+
+// 표시할 점이 너무 많아지면 주/월 평균으로 묶는다
+function bucketOf(dateStr, mode) {
+  const d = new Date(dateStr);
+  if (mode === 'month') return dateStr.slice(0, 7);          // YYYY-MM
+  if (mode === 'week') {                                      // 그 주의 월요일 기준
+    const day = (d.getDay() + 6) % 7;
+    d.setDate(d.getDate() - day);
+    return d.toISOString().slice(0, 10);
+  }
+  return dateStr;                                            // day
+}
+function labelOf(key, mode) {
+  if (mode === 'month') { const [y,m]=key.split('-'); return `${y.slice(2)}/${m}`; }
+  const dt = new Date(key); return (dt.getMonth()+1)+'/'+dt.getDate();
+}
+
+function render() {
+  let dates = allDates();
+  if (range < dates.length) dates = dates.slice(dates.length - range);
+
+  // 점 개수에 따라 묶기 단위 자동 결정
+  const span = dates.length;
+  const mode = span <= 31 ? 'day' : span <= 120 ? 'week' : 'month';
+
+  // 버킷 목록(정렬)
+  const buckets = [];
+  const seen = new Set();
+  dates.forEach(d => { const b = bucketOf(d, mode); if (!seen.has(b)) { seen.add(b); buckets.push(b); } });
+  const bIdx = Object.fromEntries(buckets.map((b,i)=>[b,i]));
+
+  const datasets = games.filter(g => g.on).map(g => {
+    const sum = new Array(buckets.length).fill(0);
+    const cnt = new Array(buckets.length).fill(0);
+    g.hist.forEach(([d, s]) => {
+      const b = bucketOf(d, mode);
+      if (b in bIdx && dates.includes(d)) { sum[bIdx[b]] += s; cnt[bIdx[b]] += 1; }
+    });
+    const data = sum.map((v,i)=> cnt[i] ? +(v/cnt[i]).toFixed(3) : null);
+    return { label:g.name, data, borderColor:g.color, backgroundColor:g.color,
+             tension:.3, pointRadius: buckets.length<=12?3:0, pointHoverRadius:5, borderWidth:2, spanGaps:true };
+  });
+
+  const labels = buckets.map(b => labelOf(b, mode));
+  const modeLabel = mode==='day' ? '일별' : mode==='week' ? '주 평균' : '월 평균';
+  document.getElementById('agg').textContent = `· ${modeLabel} 표시`;
+
+  if (chart) chart.destroy();
+  chart = new Chart(document.getElementById('chart'), {
+    type:'line', data:{ labels, datasets },
+    options:{ responsive:true, maintainAspectRatio:false, interaction:{mode:'index',intersect:false},
+      plugins:{ legend:{display:false}, tooltip:{ callbacks:{ label:(c)=>` ${c.dataset.label}: ${c.parsed.y?.toFixed(2) ?? '-'}` } } },
+      scales:{ y:{ suggestedMin:3.5, suggestedMax:5, ticks:{ stepSize:0.1 } },
+               x:{ ticks:{ maxRotation:0, autoSkip:true, maxTicksLimit:9 } } } }
+  });
+}
+
+function drawChips() {
+  document.getElementById('chips').innerHTML = games.map((g,i) =>
+    `<span class="chip" onclick="toggle(${i})" style="${g.on?`background:${g.color};color:#fff;border-color:${g.color};`:''}">${g.name}</span>`
+  ).join('');
+}
+function toggle(i){ games[i].on=!games[i].on; drawChips(); render(); }
+function showAll(){ games.forEach(g=>g.on=true); drawChips(); render(); }
+function clearAll(){ games.forEach(g=>g.on=false); drawChips(); render(); }
+function setRange(n){ range=n;
+  ['p7','p30','p90','p180','p365','pall'].forEach(id=>document.getElementById(id).classList.remove('on'));
+  const id = {7:'p7',30:'p30',90:'p90',180:'p180',365:'p365'}[n] || 'pall';
+  document.getElementById(id).classList.add('on');
+  render();
+}
+load();
+</script>
+</body>
+</html>
