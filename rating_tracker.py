@@ -58,6 +58,9 @@ MAIL_FROM = os.environ.get("MAIL_FROM") or SMTP_USER
 MAIL_TO   = [a.strip() for a in os.environ.get("MAIL_TO", "").split(",") if a.strip()]
 MAIL_NAME = os.environ.get("MAIL_NAME", "별점 추적 봇")
 
+# 그래프 웹페이지 주소 (메일 하단 버튼에 사용). 비우면 버튼 미표시.
+GRAPH_URL = "https://meiliem.github.io/rating-tracker/"
+
 
 # ────────────────────────────────────────────────────────────
 def load_history():
@@ -159,6 +162,9 @@ def build_report(today, rows, drops, errors):
     if errors:
         lines.append("")
         lines.append(f"⚠️ 수집 실패 {len(errors)}개: " + ", ".join(g["name"] for g, _ in errors))
+    if GRAPH_URL:
+        lines.append("")
+        lines.append("📈 별점 추이 그래프는 메일 하단의 '그래프로 추이 보기' 버튼에서 확인하세요.")
     text = "\n".join(lines)
 
     # HTML
@@ -190,6 +196,10 @@ def build_report(today, rows, drops, errors):
                  f"<td style='padding:7px 8px;text-align:right;font-weight:600;'>{_fmt(r['score'])}</td>"
                  f"<td style='padding:7px 8px;text-align:right;color:{color};font-weight:600;white-space:nowrap;'>{badge}</td></tr>")
     h.append("</table>")
+    if GRAPH_URL:
+        h.append(f"<div style='margin-top:14px;'><a href='{GRAPH_URL}' "
+                 "style='display:inline-block;font-size:13px;color:#185FA5;text-decoration:none;"
+                 "border:1px solid #cdddef;border-radius:7px;padding:8px 14px;'>📈 그래프로 추이 보기 →</a></div>")
     if errors:
         h.append("<div style='background:#FAEEDA;border-radius:8px;padding:10px 13px;margin-top:12px;'>"
                  f"<span style='font-size:12.5px;color:#854F0B;'>⚠️ 수집 실패 {len(errors)}개 — "
